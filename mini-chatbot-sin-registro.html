@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<!--
+  Mini chatbot SIN REGISTRO — Pollinations.ai
+  Endpoint anónimo: GET https://gen.pollinations.ai/text/{prompt}
+  Sin API key, sin cuenta, sin popup. A cambio: modelo del nivel gratuito,
+  límites de peticiones anónimas (si va lento o da 429, espera unos segundos).
+  El historial se empaqueta en el prompt porque el endpoint anónimo es de un solo turno.
+-->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini chat · sin registro</title>
+<style>
+  :root{
+    --bg:#0f1520;
+    --panel:#161f2c;
+    --line:#27344a;
+    --text:#e9eef6;
+    --muted:#8fa0b8;
+    --accent:#f3a93c;
+    --accent-text:#241a08;
+    --bot:#1c2738;
+    --error:#ff7a6e;
+  }
+  *{ box-sizing:border-box; }
+  html, body{ height:100%; }
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font:15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display:flex;
+    justify-content:center;
+  }
+  .app{ display:flex; flex-direction:column; width:min(640px,100%); height:100dvh; }
+
+  header{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:14px 18px; border-bottom:1px solid var(--line);
+  }
+  .brand{
+    display:flex; align-items:center; gap:9px;
+    font:600 13px/1 ui-monospace, "Cascadia Code", Consolas, monospace;
+    letter-spacing:.4px;
+  }
+  .dot{ width:9px; height:9px; border-radius:50%; background:var(--muted); }
+  .dot.busy{ background:var(--accent); animation:pulse .9s infinite alternate; }
+  @keyframes pulse{ to{ opacity:.35; } }
+  .tag{
+    font:11px ui-monospace, Consolas, monospace; color:var(--muted);
+    border:1px solid var(--line); border-radius:8px; padding:6px 9px;
+  }
+
+  main{ flex:1; overflow-y:auto; padding:20px 18px; display:flex; flex-direction:column; gap:12px; }
+  .empty{ margin:auto; color:var(--muted); font-size:14px; text-align:center; max-width:36ch; }
+  .msg{
+    max-width:82%; padding:10px 14px; border-radius:14px;
+    white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+  .msg.user{
+    align-self:flex-end; background:var(--accent); color:var(--accent-text);
+    border-bottom-right-radius:4px;
+  }
+  .msg.bot{
+    align-self:flex-start; background:var(--bot);
+    border:1px solid var(--line); border-bottom-left-radius:4px;
+  }
+  .msg.error{
+    align-self:flex-start; background:transparent;
+    border:1px dashed var(--error); color:var(--error);
+  }
+  .typing{ align-self:flex-start; display:flex; gap:5px; padding:14px; }
+  .typing i{ width:6px; height:6px; border-radius:50%; background:var(--muted); animation:blink 1.2s infinite; }
+  .typing i:nth-child(2){ animation-delay:.2s; }
+  .typing i:nth-child(3){ animation-delay:.4s; }
+  @keyframes blink{ 0%,60%,100%{ opacity:.25; } 30%{ opacity:1; } }
+
+  footer{ display:flex; gap:10px; padding:14px 18px 18px; border-top:1px solid var(--line); }
+  input{
+    flex:1; background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:12px; padding:12px 14px; font:inherit;
+  }
+  input::placeholder{ color:var(--muted); }
+  button{
+    background:var(--accent); color:var(--accent-text);
+    border:0; border-radius:12px; padding:0 20px;
+    font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;
+  }
+  button:disabled, input:disabled{ opacity:.55; cursor:default; }
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce){
+    .dot.busy, .typing i{ animation:none; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="brand"><span class="dot" id="statusDot"></span>mini-chat</div>
+    <span class="tag">pollinations · sin registro</span>
+  </header>
+
+  <main id="messages">
+    <p class="empty" id="emptyHint">Sin cuentas ni API keys. Escribe tu primer mensaje. Si la respuesta tarda o falla, el nivel anónimo está saturado: espera unos segundos.</p>
+  </main>
+
+  <footer>
+    <input id="input" type="text" placeholder="Escribe un mensaje..." autocomplete="off" autofocus>
+    <button id="sendBtn" type="button">Enviar</button>
+  </footer>
+
+</div>
+
+<script>
+  const messagesEl = document.getElementById('messages');
+  const inputEl    = document.getElementById('input');
+  const sendBtn    = document.getElementById('sendBtn');
+  const dotEl      = document.getElementById('statusDot');
+
+  const SYSTEM = 'Eres un asistente útil y conciso. Responde en el idioma del usuario. ' +
+                 'Continúa la conversación escribiendo únicamente el siguiente turno del Asistente, sin prefijos.';
+
+  const history = []; // [{role:'user'|'assistant', content:'...'}]
+
+  function addMsg(text, cls){
+    const el = document.createElement('div');
+    el.className = 'msg ' + cls;
+    el.textContent = text;            // textContent: sin riesgo de inyección HTML
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function addTyping(){
+    const el = document.createElement('div');
+    el.className = 'typing';
+    el.innerHTML = '<i></i><i></i><i></i>';
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function setBusy(busy){
+    inputEl.disabled = busy;
+    sendBtn.disabled = busy;
+    dotEl.classList.toggle('busy', busy);
+  }
+
+  // El endpoint anónimo es de un solo turno: empaquetamos el historial en el prompt.
+  function buildPrompt(){
+    const lines = history.map(m =>
+      (m.role === 'user' ? 'Usuario: ' : 'Asistente: ') + m.content
+    );
+    return SYSTEM + '\n\n' + lines.join('\n') + '\nAsistente:';
+  }
+
+  // Las URLs tienen límite de longitud: recortamos los turnos más antiguos si hace falta.
+  function trimHistory(){
+    while (history.length > 2 && encodeURIComponent(buildPrompt()).length > 6000){
+      history.splice(0, 2); // quita el par usuario/asistente más viejo
+    }
+  }
+
+  async function send(){
+    const text = inputEl.value.trim();
+    if (!text || sendBtn.disabled) return;
+
+    document.getElementById('emptyHint')?.remove();
+    addMsg(text, 'user');
+    history.push({ role: 'user', content: text });
+    trimHistory();
+    inputEl.value = '';
+    setBusy(true);
+    const typing = addTyping();
+
+    try {
+      const url = 'https://gen.pollinations.ai/text/' + encodeURIComponent(buildPrompt());
+      const res = await fetch(url);
+
+      if (res.status === 429){
+        throw new Error('Límite anónimo alcanzado. Espera unos segundos y reintenta.');
+      }
+      if (!res.ok){
+        throw new Error('El servicio respondió ' + res.status + '. Reintenta en un momento.');
+      }
+
+      let out = (await res.text()).trim();
+      out = out.replace(/^\s*(Asistente|Assistant)\s*:\s*/i, '') || '(respuesta vacía)';
+
+      history.push({ role: 'assistant', content: out });
+      typing.remove();
+      addMsg(out, 'bot');
+    } catch (err) {
+      history.pop(); // quita el turno fallido para poder reintentar limpio
+      typing.remove();
+      addMsg('Error: ' + (err?.message || 'sin conexión con el servicio.'), 'error');
+    } finally {
+      setBusy(false);
+      inputEl.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', send);
+  inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+</script>
+</body>
+</html>
