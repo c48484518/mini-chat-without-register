@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<!--
+  Mini chatbot SIN REGISTRO - LLM7.io
+  API compatible con OpenAI, nivel anonimo: sin cuenta, sin key real ("unused").
+  Limite anonimo: ~30 peticiones/min. Lista de modelos: https://api.llm7.io/v1/models
+  Si algun dia muere: plan B keyless = OVHcloud AI Endpoints (2 req/min, EU).
+
+  NUEVO: Soporte multimodal - adjunta imagenes para que el modelo las analice.
+  Las imagenes se convierten a base64 EN TU NAVEGADOR y se envian a la API.
+  Cero procesamiento en servidor propio. Cero registro.
+-->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mini chat · sin registro</title>
+<style>
+  :root{
+    --bg:#0f1520;
+    --panel:#161f2c;
+    --line:#27344a;
+    --text:#e9eef6;
+    --muted:#8fa0b8;
+    --accent:#f3a93c;
+    --accent-text:#241a08;
+    --bot:#1c2738;
+    --error:#ff7a6e;
+    --success:#4ade80;
+    --drop:rgba(243,169,60,0.12);
+    --drop-border:rgba(243,169,60,0.5);
+  }
+  *{ box-sizing:border-box; }
+  html, body{ height:100%; }
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font:15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display:flex;
+    justify-content:center;
+  }
+  .app{ display:flex; flex-direction:column; width:min(640px,100%); height:100dvh; }
+
+  header{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:14px 18px; border-bottom:1px solid var(--line);
+  }
+  .brand{
+    display:flex; align-items:center; gap:9px;
+    font:600 13px/1 ui-monospace, "Cascadia Code", Consolas, monospace;
+    letter-spacing:.4px;
+  }
+  .dot{ width:9px; height:9px; border-radius:50%; background:var(--muted); }
+  .dot.busy{ background:var(--accent); animation:pulse .9s infinite alternate; }
+  @keyframes pulse{ to{ opacity:.35; } }
+  select{
+    background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:7px 9px;
+    font:12px ui-monospace, Consolas, monospace; cursor:pointer;
+    max-width:55%;
+  }
+
+  /* Indicador de soporte de vision */
+  .vision-badge{
+    display:none;
+    align-items:center;
+    gap:4px;
+    font-size:11px;
+    color:var(--success);
+    background:rgba(74,222,128,0.1);
+    border:1px solid rgba(74,222,128,0.25);
+    padding:3px 8px;
+    border-radius:20px;
+    white-space:nowrap;
+  }
+  .vision-badge.active{ display:flex; }
+  .vision-badge svg{ width:12px; height:12px; }
+
+  main{
+    flex:1; overflow-y:auto; padding:20px 18px;
+    display:flex; flex-direction:column; gap:12px;
+    transition: background 0.2s;
+  }
+  main.drag-over{
+    background: var(--drop);
+    outline: 2px dashed var(--drop-border);
+    outline-offset: -4px;
+    border-radius: 8px;
+  }
+  .empty{
+    margin:auto; color:var(--muted); font-size:14px; text-align:center; max-width:36ch;
+  }
+  .empty kbd{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:4px; padding:2px 6px; font-size:12px;
+  }
+  .msg{
+    max-width:82%; padding:10px 14px; border-radius:14px;
+    white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+  .msg.user{
+    align-self:flex-end; background:var(--accent); color:var(--accent-text);
+    border-bottom-right-radius:4px;
+  }
+  .msg.bot{
+    align-self:flex-start; background:var(--bot);
+    border:1px solid var(--line); border-bottom-left-radius:4px;
+  }
+  .msg.error{
+    align-self:flex-start; background:transparent;
+    border:1px dashed var(--error); color:var(--error);
+  }
+
+  /* Imagen dentro del mensaje del usuario */
+  .msg.user .chat-img{
+    max-width:240px; max-height:200px; border-radius:10px;
+    display:block; margin-bottom:6px; cursor:zoom-in;
+    border:1px solid rgba(36,26,8,0.2);
+  }
+  /* Imagen dentro del mensaje del bot (si la API devuelve markdown de imagen) */
+  .msg.bot .chat-img{
+    max-width:100%; border-radius:10px; display:block; margin:6px 0;
+  }
+  .msg .img-caption{
+    font-size:13px; opacity:0.85;
+  }
+
+  .typing{ align-self:flex-start; display:flex; gap:5px; padding:14px; }
+  .typing i{ width:6px; height:6px; border-radius:50%; background:var(--muted); animation:blink 1.2s infinite; }
+  .typing i:nth-child(2){ animation-delay:.2s; }
+  .typing i:nth-child(3){ animation-delay:.4s; }
+  @keyframes blink{ 0%,60%,100%{ opacity:.25; } 30%{ opacity:1; } }
+
+  footer{
+    display:flex; flex-direction:column;
+    padding:0 18px 18px; border-top:1px solid var(--line);
+  }
+  /* Area de preview de imagen */
+  .img-preview-area{
+    display:none; align-items:center; gap:10px;
+    padding:10px 0 6px;
+  }
+  .img-preview-area.active{ display:flex; }
+  .img-thumb{
+    width:48px; height:48px; border-radius:8px; object-fit:cover;
+    border:1px solid var(--line);
+  }
+  .img-info{
+    flex:1; font-size:12px; color:var(--muted);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .img-remove{
+    background:transparent; color:var(--muted); border:1px solid var(--line);
+    border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer;
+    font-family:inherit;
+  }
+  .img-remove:hover{ color:var(--error); border-color:var(--error); }
+
+  .input-row{
+    display:flex; gap:10px; padding-top:10px;
+  }
+  input{
+    flex:1; background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:12px; padding:12px 14px; font:inherit;
+  }
+  input::placeholder{ color:var(--muted); }
+  button{
+    background:var(--accent); color:var(--accent-text);
+    border:0; border-radius:12px; padding:0 20px;
+    font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  button:disabled, input:disabled{ opacity:.55; cursor:default; }
+
+  /* Boton de adjuntar */
+  .attach-btn{
+    background:var(--panel); color:var(--muted);
+    border:1px solid var(--line); border-radius:12px;
+    padding:0 14px; cursor:pointer; display:flex;
+    align-items:center; justify-content:center;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .attach-btn:hover{ color:var(--text); border-color:var(--muted); }
+  .attach-btn svg{ width:18px; height:18px; }
+  .attach-btn:disabled{ opacity:.4; cursor:default; }
+
+  /* Modal para zoom de imagen */
+  .img-modal{
+    display:none; position:fixed; inset:0; z-index:100;
+    background:rgba(0,0,0,0.85);
+    align-items:center; justify-content:center;
+    padding:20px; cursor:zoom-out;
+  }
+  .img-modal.active{ display:flex; }
+  .img-modal img{
+    max-width:90%; max-height:90%;
+    border-radius:12px; object-fit:contain;
+    box-shadow:0 20px 60px rgba(0,0,0,0.5);
+  }
+
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce){
+    .dot.busy, .typing i{ animation:none; }
+  }
+</style>
+<base target="_blank">
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+      <div class="brand"><span class="dot" id="statusDot"></span>mini-chat</div>
+      <div class="vision-badge" id="visionBadge" title="Este modelo puede analizar imagenes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        Vision
+      </div>
+    </div>
+    <select id="modelSelect" aria-label="Modelo">
+      <option value="gpt-4o-mini">GPT-4o mini · rapido + vision</option>
+      <option value="deepseek-v3-0324">DeepSeek V3 · potente</option>
+      <option value="deepseek-r1-0528">DeepSeek R1 · razonamiento</option>
+    </select>
+  </header>
+
+  <main id="messages">
+    <p class="empty" id="emptyHint">
+      Sin cuentas ni API keys (LLM7.io, nivel anonimo).<br><br>
+      Escribe tu mensaje o <strong>arrastra una imagen</strong> aqui.<br>
+      Tambien puedes pegar imagen con <kbd>Ctrl+V</kbd>.<br>
+      Solo GPT-4o mini soporta analisis de imagenes.
+    </p>
+  </main>
+
+  <footer>
+    <div class="img-preview-area" id="imgPreviewArea">
+      <img class="img-thumb" id="imgThumb" src="" alt="Preview">
+      <span class="img-info" id="imgInfo">imagen.png</span>
+      <button class="img-remove" id="imgRemove" type="button">Quitar</button>
+    </div>
+    <div class="input-row">
+      <input id="input" type="text" placeholder="Escribe un mensaje..." autocomplete="off" autofocus>
+      <button class="attach-btn" id="attachBtn" type="button" title="Adjuntar imagen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <button id="sendBtn" type="button">Enviar</button>
+    </div>
+    <input type="file" id="fileInput" accept="image/*" style="display:none">
+  </footer>
+
+</div>
+
+<!-- Modal zoom imagen -->
+<div class="img-modal" id="imgModal">
+  <img id="imgModalImg" src="" alt="Vista ampliada">
+</div>
+
+<script>
+  const API_URL = 'https://api.llm7.io/v1/chat/completions';
+
+  // Modelos que soportan vision (multimodal)
+  const VISION_MODELS = ['gpt-4o-mini'];
+
+  const messagesEl   = document.getElementById('messages');
+  const inputEl      = document.getElementById('input');
+  const sendBtn      = document.getElementById('sendBtn');
+  const modelEl      = document.getElementById('modelSelect');
+  const dotEl        = document.getElementById('statusDot');
+  const visionBadge  = document.getElementById('visionBadge');
+  const attachBtn    = document.getElementById('attachBtn');
+  const fileInput    = document.getElementById('fileInput');
+  const imgPreview   = document.getElementById('imgPreviewArea');
+  const imgThumb     = document.getElementById('imgThumb');
+  const imgInfo      = document.getElementById('imgInfo');
+  const imgRemove    = document.getElementById('imgRemove');
+  const imgModal     = document.getElementById('imgModal');
+  const imgModalImg  = document.getElementById('imgModalImg');
+
+  const SYSTEM = 'Eres un asistente util y conciso. Responde en el idioma del usuario. Cuando se te comparta una imagen, analizala con detalle si el usuario lo solicita, o tenla en cuenta para tu respuesta.';
+  const history = []; // {role, content} o {role, content: [{type, ...}]}
+
+  let attachedImage = null; // { base64, mime, name, size }
+
+  // ---------- Helpers UI ----------
+
+  function updateVisionBadge(){
+    const supports = VISION_MODELS.includes(modelEl.value);
+    visionBadge.classList.toggle('active', supports);
+    attachBtn.disabled = !supports;
+    attachBtn.title = supports ? 'Adjuntar imagen' : 'Solo GPT-4o mini soporta imagenes';
+  }
+  modelEl.addEventListener('change', () => {
+    updateVisionBadge();
+    if (!VISION_MODELS.includes(modelEl.value) && attachedImage) {
+      clearAttachedImage();
+    }
+  });
+  updateVisionBadge();
+
+  function formatBytes(b){
+    if (b < 1024) return b + ' B';
+    if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+    return (b/(1024*1024)).toFixed(2) + ' MB';
+  }
+
+  function setAttachedImage({ base64, mime, name, size }){
+    attachedImage = { base64, mime, name, size };
+    imgThumb.src = base64;
+    imgInfo.textContent = name + ' · ' + formatBytes(size);
+    imgPreview.classList.add('active');
+    inputEl.focus();
+  }
+
+  function clearAttachedImage(){
+    attachedImage = null;
+    imgThumb.src = '';
+    imgInfo.textContent = '';
+    imgPreview.classList.remove('active');
+    fileInput.value = '';
+  }
+
+  imgRemove.addEventListener('click', clearAttachedImage);
+
+  // ---------- Adjuntar imagen ----------
+
+  attachBtn.addEventListener('click', () => {
+    if (!attachBtn.disabled) fileInput.click();
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) readImageFile(file);
+  });
+
+  function readImageFile(file){
+    if (!file.type.startsWith('image/')){
+      addMsg('Error: El archivo debe ser una imagen (JPG, PNG, GIF, WebP...)', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setAttachedImage({
+        base64: ev.target.result,
+        mime: file.type,
+        name: file.name,
+        size: file.size
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ---------- Drag & Drop ----------
+
+  ['dragenter','dragover','dragleave','drop'].forEach(evt => {
+    messagesEl.addEventListener(evt, preventDefaults, false);
+    document.body.addEventListener(evt, preventDefaults, false);
+  });
+  function preventDefaults(e){ e.preventDefault(); e.stopPropagation(); }
+
+  messagesEl.addEventListener('dragenter', () => {
+    if (VISION_MODELS.includes(modelEl.value)) messagesEl.classList.add('drag-over');
+  });
+  messagesEl.addEventListener('dragleave', (e) => {
+    if (e.relatedTarget && !messagesEl.contains(e.relatedTarget)) messagesEl.classList.remove('drag-over');
+  });
+  messagesEl.addEventListener('drop', (e) => {
+    messagesEl.classList.remove('drag-over');
+    if (!VISION_MODELS.includes(modelEl.value)){
+      addMsg('Este modelo no soporta imagenes. Cambia a GPT-4o mini.', 'error');
+      return;
+    }
+    const files = e.dataTransfer.files;
+    if (files.length) readImageFile(files[0]);
+  });
+
+  // ---------- Clipboard (pegar imagen) ----------
+
+  document.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items){
+      if (item.type.startsWith('image/')){
+        e.preventDefault();
+        if (!VISION_MODELS.includes(modelEl.value)){
+          addMsg('Este modelo no soporta imagenes. Cambia a GPT-4o mini.', 'error');
+          return;
+        }
+        const file = item.getAsFile();
+        if (file) readImageFile(file);
+        break;
+      }
+    }
+  });
+
+  // ---------- Mensajes ----------
+
+  function addMsg(text, cls){
+    const el = document.createElement('div');
+    el.className = 'msg ' + cls;
+    el.textContent = text;
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function addMsgWithImage(text, imageBase64, imageName){
+    const el = document.createElement('div');
+    el.className = 'msg user';
+
+    const img = document.createElement('img');
+    img.className = 'chat-img';
+    img.src = imageBase64;
+    img.alt = imageName || 'Imagen adjunta';
+    img.addEventListener('click', () => openModal(imageBase64));
+    el.appendChild(img);
+
+    if (text){
+      const cap = document.createElement('div');
+      cap.className = 'img-caption';
+      cap.textContent = text;
+      el.appendChild(cap);
+    }
+
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function addTyping(){
+    const el = document.createElement('div');
+    el.className = 'typing';
+    el.innerHTML = '<i></i><i></i><i></i>';
+    messagesEl.appendChild(el);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return el;
+  }
+
+  function setBusy(busy){
+    inputEl.disabled = busy;
+    sendBtn.disabled = busy;
+    attachBtn.disabled = busy || !VISION_MODELS.includes(modelEl.value);
+    dotEl.classList.toggle('busy', busy);
+  }
+
+  function trimHistory(){
+    if (history.length > 20) history.splice(0, history.length - 20);
+    while (history.length && history[0].role !== 'user') history.shift();
+  }
+
+  // ---------- Modal zoom ----------
+
+  function openModal(src){
+    imgModalImg.src = src;
+    imgModal.classList.add('active');
+  }
+  imgModal.addEventListener('click', () => imgModal.classList.remove('active'));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') imgModal.classList.remove('active');
+  });
+
+  // ---------- Envio ----------
+
+  async function send(){
+    const text = inputEl.value.trim();
+    const hasImage = attachedImage !== null;
+
+    // Permite enviar imagen sola, o texto solo, o ambos
+    if ((!text && !hasImage) || sendBtn.disabled) return;
+
+    document.getElementById('emptyHint')?.remove();
+
+    // Construye el mensaje del usuario para la API
+    let userMessage;
+    let userContentForHistory;
+
+    if (hasImage){
+      // Formato multimodal de OpenAI
+      const contentBlocks = [];
+      if (text) contentBlocks.push({ type: 'text', text });
+      contentBlocks.push({
+        type: 'image_url',
+        image_url: { url: attachedImage.base64 }
+      });
+      userMessage = { role: 'user', content: contentBlocks };
+      // Para el historial local guardamos una version simplificada
+      userContentForHistory = text
+        ? `[Imagen: ${attachedImage.name}] ${text}`
+        : `[Imagen: ${attachedImage.name}]`;
+    } else {
+      userMessage = { role: 'user', content: text };
+      userContentForHistory = text;
+    }
+
+    // Muestra en UI
+    if (hasImage){
+      addMsgWithImage(text, attachedImage.base64, attachedImage.name);
+    } else {
+      addMsg(text, 'user');
+    }
+
+    // Guarda en historial (usamos el objeto real para la API)
+    history.push(userMessage);
+    trimHistory();
+    inputEl.value = '';
+    const imgToClear = hasImage;
+    if (imgToClear) clearAttachedImage();
+    setBusy(true);
+    const typing = addTyping();
+
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer unused'
+        },
+        body: JSON.stringify({
+          model: modelEl.value,
+          messages: [ { role: 'system', content: SYSTEM }, ...history ]
+        })
+      });
+
+      if (res.status === 429){
+        throw new Error('Limite anonimo alcanzado (~30/min). Espera un poco y reintenta.');
+      }
+      if (!res.ok){
+        throw new Error('El servicio respondio ' + res.status + '. Reintenta o cambia de modelo.');
+      }
+
+      const data = await res.json();
+      let out = data?.choices?.[0]?.message?.content || '';
+      out = out.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || '(respuesta vacia)';
+
+      history.push({ role: 'assistant', content: out });
+      typing.remove();
+      addMsg(out, 'bot');
+    } catch (err) {
+      history.pop();
+      typing.remove();
+      addMsg('Error: ' + (err?.message || 'sin conexion con el servicio.'), 'error');
+    } finally {
+      setBusy(false);
+      inputEl.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', send);
+  inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+</script>
+</body>
+</html>
