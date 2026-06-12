@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <!--
   Mini chatbot SIN REGISTRO - LLM7.io
   API compatible con OpenAI, nivel anonimo: sin cuenta, sin key real ("unused").
@@ -460,35 +460,43 @@
 
   // ---------- Envio ----------
 
+
+
   async function send(){
     const text = inputEl.value.trim();
     const hasImage = attachedImage !== null;
 
-    // Permite enviar imagen sola, o texto solo, o ambos
     if ((!text && !hasImage) || sendBtn.disabled) return;
 
     document.getElementById('emptyHint')?.remove();
 
-    // Construye el mensaje del usuario para la API
     let userMessage;
     let userContentForHistory;
 
     if (hasImage){
-      // Formato multimodal de OpenAI
-      const contentBlocks = [];
-      if (text) contentBlocks.push({ type: 'text', text });
-      contentBlocks.push({
+        const contentBlocks = [];
+        if (text) contentBlocks.push({ type: 'text', text });
+        
+        // ✅ Asegurar que el Data URL esté bien formado
+        // Algunas APIs requieren que el base64 NO incluya el prefijo data:image/...
+        // pero OpenAI SÍ lo requiere. Para compatibilidad, verificamos:
+        let imageUrl = attachedImage.base64;
+        if (!imageUrl.startsWith('data:')) {
+        imageUrl = `data:${attachedImage.mime};base64,${imageUrl}`;
+        }
+        
+        contentBlocks.push({
         type: 'image_url',
-        image_url: { url: attachedImage.base64 }
-      });
-      userMessage = { role: 'user', content: contentBlocks };
-      // Para el historial local guardamos una version simplificada
-      userContentForHistory = text
+        image_url: { url: imageUrl, detail: 'auto' }  // detail: 'auto' es opcional pero recomendado
+        });
+        
+        userMessage = { role: 'user', content: contentBlocks };
+        userContentForHistory = text
         ? `[Imagen: ${attachedImage.name}] ${text}`
         : `[Imagen: ${attachedImage.name}]`;
     } else {
-      userMessage = { role: 'user', content: text };
-      userContentForHistory = text;
+        userMessage = { role: 'user', content: text };
+        userContentForHistory = text;
     }
 
     // Muestra en UI
