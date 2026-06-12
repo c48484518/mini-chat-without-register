@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 <!--
-  Mini chatbot SIN REGISTRO — Pollinations.ai
-  Endpoint anónimo: GET https://gen.pollinations.ai/text/{prompt}
-  Sin API key, sin cuenta, sin popup. A cambio: modelo del nivel gratuito,
-  límites de peticiones anónimas (si va lento o da 429, espera unos segundos).
-  El historial se empaqueta en el prompt porque el endpoint anónimo es de un solo turno.
+  Mini chatbot SIN REGISTRO - LLM7.io
+  API compatible con OpenAI, nivel anonimo: sin cuenta, sin key real ("unused").
+  Limite anonimo: ~30 peticiones/min. Lista de modelos: https://api.llm7.io/v1/models
+  Si algun dia muere: plan B keyless = OVHcloud AI Endpoints (2 req/min, EU).
 -->
 <html lang="es">
 <head>
@@ -47,9 +46,11 @@
   .dot{ width:9px; height:9px; border-radius:50%; background:var(--muted); }
   .dot.busy{ background:var(--accent); animation:pulse .9s infinite alternate; }
   @keyframes pulse{ to{ opacity:.35; } }
-  .tag{
-    font:11px ui-monospace, Consolas, monospace; color:var(--muted);
-    border:1px solid var(--line); border-radius:8px; padding:6px 9px;
+  select{
+    background:var(--panel); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:7px 9px;
+    font:12px ui-monospace, Consolas, monospace; cursor:pointer;
+    max-width:55%;
   }
 
   main{ flex:1; overflow-y:auto; padding:20px 18px; display:flex; flex-direction:column; gap:12px; }
@@ -99,11 +100,15 @@
 
   <header>
     <div class="brand"><span class="dot" id="statusDot"></span>mini-chat</div>
-    <span class="tag">pollinations · sin registro</span>
+    <select id="modelSelect" aria-label="Modelo">
+      <option value="gpt-4o-mini">GPT-4o mini · rápido</option>
+      <option value="deepseek-v3-0324">DeepSeek V3 · potente</option>
+      <option value="deepseek-r1-0528">DeepSeek R1 · razonamiento</option>
+    </select>
   </header>
 
   <main id="messages">
-    <p class="empty" id="emptyHint">Sin cuentas ni API keys. Escribe tu primer mensaje. Si la respuesta tarda o falla, el nivel anónimo está saturado: espera unos segundos.</p>
+    <p class="empty" id="emptyHint">Sin cuentas ni API keys (LLM7.io, nivel anónimo). Escribe tu primer mensaje. Límite: ~30 peticiones por minuto.</p>
   </main>
 
   <footer>
@@ -114,14 +119,15 @@
 </div>
 
 <script>
+  const API_URL = 'https://api.llm7.io/v1/chat/completions';
+
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('input');
   const sendBtn    = document.getElementById('sendBtn');
+  const modelEl    = document.getElementById('modelSelect');
   const dotEl      = document.getElementById('statusDot');
 
-  const SYSTEM = 'Eres un asistente útil y conciso. Responde en el idioma del usuario. ' +
-                 'Continúa la conversación escribiendo únicamente el siguiente turno del Asistente, sin prefijos.';
-
+  const SYSTEM = 'Eres un asistente útil y conciso. Responde en el idioma del usuario.';
   const history = []; // [{role:'user'|'assistant', content:'...'}]
 
   function addMsg(text, cls){
@@ -148,19 +154,11 @@
     dotEl.classList.toggle('busy', busy);
   }
 
-  // El endpoint anónimo es de un solo turno: empaquetamos el historial en el prompt.
-  function buildPrompt(){
-    const lines = history.map(m =>
-      (m.role === 'user' ? 'Usuario: ' : 'Asistente: ') + m.content
-    );
-    return SYSTEM + '\n\n' + lines.join('\n') + '\nAsistente:';
-  }
-
-  // Las URLs tienen límite de longitud: recortamos los turnos más antiguos si hace falta.
+  // Mantiene el payload pequeño: conserva los últimos 20 turnos,
+  // empezando siempre por un mensaje de usuario.
   function trimHistory(){
-    while (history.length > 2 && encodeURIComponent(buildPrompt()).length > 6000){
-      history.splice(0, 2); // quita el par usuario/asistente más viejo
-    }
+    if (history.length > 20) history.splice(0, history.length - 20);
+    while (history.length && history[0].role !== 'user') history.shift();
   }
 
   async function send(){
@@ -176,18 +174,29 @@
     const typing = addTyping();
 
     try {
-      const url = 'https://gen.pollinations.ai/text/' + encodeURIComponent(buildPrompt());
-      const res = await fetch(url);
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer unused' // nivel anónimo: no hace falta key real
+        },
+        body: JSON.stringify({
+          model: modelEl.value,
+          messages: [ { role: 'system', content: SYSTEM }, ...history ]
+        })
+      });
 
       if (res.status === 429){
-        throw new Error('Límite anónimo alcanzado. Espera unos segundos y reintenta.');
+        throw new Error('Límite anónimo alcanzado (~30/min). Espera un poco y reintenta.');
       }
       if (!res.ok){
-        throw new Error('El servicio respondió ' + res.status + '. Reintenta en un momento.');
+        throw new Error('El servicio respondió ' + res.status + '. Reintenta o cambia de modelo.');
       }
 
-      let out = (await res.text()).trim();
-      out = out.replace(/^\s*(Asistente|Assistant)\s*:\s*/i, '') || '(respuesta vacía)';
+      const data = await res.json();
+      let out = data?.choices?.[0]?.message?.content || '';
+      // DeepSeek R1 puede incluir su razonamiento en <think>...</think>: lo ocultamos.
+      out = out.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || '(respuesta vacía)';
 
       history.push({ role: 'assistant', content: out });
       typing.remove();
