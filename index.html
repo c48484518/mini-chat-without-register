@@ -1,13 +1,34 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <!--
   Mini chatbot SIN REGISTRO - LLM7.io
-  API compatible con OpenAI, nivel anonimo: sin cuenta, sin key real ("unused").
-  Limite anonimo: ~30 peticiones/min. Lista de modelos: https://api.llm7.io/v1/models
-  Si algun dia muere: plan B keyless = OVHcloud AI Endpoints (2 req/min, EU).
+  ===================================
+  Filosofia (intacta):
+    - 0 procesamiento en servidor propio. No hay backend. Es 1 archivo HTML.
+    - Toda la inferencia (el "pensar" del modelo) ocurre en LLM7.io, no aqui.
+    - Lo unico que hace el navegador con la imagen es REDIMENSIONARLA (canvas)
+      antes de enviarla, para no reventar el limite de la API. Nada se guarda
+      ni se sube a ningun sitio propio.
+    - 100% gratis, nivel anonimo, sin cuenta ni API key real ("unused").
+    - Nada se guarda en disco ni en localStorage. La conversacion vive solo
+      en memoria mientras la pestana esta abierta.
 
-  NUEVO: Soporte multimodal - adjunta imagenes para que el modelo las analice.
-  Las imagenes se convierten a base64 EN TU NAVEGADOR y se envian a la API.
-  Cero procesamiento en servidor propio. Cero registro.
+  QUE SE ARREGLO (el error 400 con imagenes):
+    El catalogo de LLM7.io cambio. gpt-4o-mini / deepseek-v3-0324 /
+    deepseek-r1-0528 YA NO EXISTEN. Enviar una imagen a un modelo inexistente
+    o de solo-texto devuelve 400.
+    Solucion: la lista de modelos ahora se carga EN VIVO desde
+    https://api.llm7.io/v1/models y se detecta automaticamente cuales aceptan
+    imagen (modalities.input.input incluye "image"). Si LLM7.io vuelve a
+    cambiar el catalogo, este chat se adapta solo: no hay que tocar codigo.
+
+  VISION GRATIS:
+    Ahora mismo el unico modelo gratis (sin "tier":"pro") que acepta imagen es
+    devstral-small-2:24b. El de mejor calidad para imagenes (GLM-4.6V-Flash) es
+    Pro -> requiere token/pago, asi que rompe el "sin registro" y queda fuera.
+    Si algun dia quieres usarlo: saca un token gratis en https://token.llm7.io
+    y cambia 'unused' por tu token en la constante AUTH (1 sola linea).
+
+  Plan B si LLM7.io muere: OVHcloud AI Endpoints (anonimo, ~2 req/min, EU).
 -->
 <html lang="es">
 <head>
@@ -26,6 +47,7 @@
     --bot:#1c2738;
     --error:#ff7a6e;
     --success:#4ade80;
+    --code-bg:#0c121b;
     --drop:rgba(243,169,60,0.12);
     --drop-border:rgba(243,169,60,0.5);
   }
@@ -39,7 +61,7 @@
     display:flex;
     justify-content:center;
   }
-  .app{ display:flex; flex-direction:column; width:min(640px,100%); height:100dvh; }
+  .app{ display:flex; flex-direction:column; width:min(680px,100%); height:100dvh; }
 
   header{
     display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -53,25 +75,27 @@
   .dot{ width:9px; height:9px; border-radius:50%; background:var(--muted); }
   .dot.busy{ background:var(--accent); animation:pulse .9s infinite alternate; }
   @keyframes pulse{ to{ opacity:.35; } }
+
+  .head-tools{ display:flex; align-items:center; gap:8px; min-width:0; }
   select{
     background:var(--panel); color:var(--text);
     border:1px solid var(--line); border-radius:8px; padding:7px 9px;
     font:12px ui-monospace, Consolas, monospace; cursor:pointer;
-    max-width:55%;
+    max-width:230px;
   }
+  .icon-btn{
+    background:var(--panel); color:var(--muted);
+    border:1px solid var(--line); border-radius:8px; padding:7px 10px;
+    font:12px ui-monospace, Consolas, monospace; cursor:pointer;
+    white-space:nowrap; transition:color .15s, border-color .15s;
+  }
+  .icon-btn:hover{ color:var(--text); border-color:var(--muted); }
 
-  /* Indicador de soporte de vision */
   .vision-badge{
-    display:none;
-    align-items:center;
-    gap:4px;
-    font-size:11px;
-    color:var(--success);
-    background:rgba(74,222,128,0.1);
-    border:1px solid rgba(74,222,128,0.25);
-    padding:3px 8px;
-    border-radius:20px;
-    white-space:nowrap;
+    display:none; align-items:center; gap:4px;
+    font-size:11px; color:var(--success);
+    background:rgba(74,222,128,0.1); border:1px solid rgba(74,222,128,0.25);
+    padding:3px 8px; border-radius:20px; white-space:nowrap;
   }
   .vision-badge.active{ display:flex; }
   .vision-badge svg{ width:12px; height:12px; }
@@ -79,51 +103,99 @@
   main{
     flex:1; overflow-y:auto; padding:20px 18px;
     display:flex; flex-direction:column; gap:12px;
-    transition: background 0.2s;
+    transition: background .2s;
   }
   main.drag-over{
     background: var(--drop);
     outline: 2px dashed var(--drop-border);
-    outline-offset: -4px;
-    border-radius: 8px;
+    outline-offset: -4px; border-radius: 8px;
   }
-  .empty{
-    margin:auto; color:var(--muted); font-size:14px; text-align:center; max-width:36ch;
-  }
+  .empty{ margin:auto; color:var(--muted); font-size:14px; text-align:center; max-width:40ch; }
   .empty kbd{
     background:var(--panel); border:1px solid var(--line);
     border-radius:4px; padding:2px 6px; font-size:12px;
   }
+  .empty .eye{ color:var(--success); }
+
   .msg{
-    max-width:82%; padding:10px 14px; border-radius:14px;
-    white-space:pre-wrap; overflow-wrap:anywhere;
+    max-width:84%; padding:10px 14px; border-radius:14px;
+    overflow-wrap:anywhere;
   }
   .msg.user{
     align-self:flex-end; background:var(--accent); color:var(--accent-text);
-    border-bottom-right-radius:4px;
+    border-bottom-right-radius:4px; white-space:pre-wrap;
   }
   .msg.bot{
     align-self:flex-start; background:var(--bot);
     border:1px solid var(--line); border-bottom-left-radius:4px;
+    position:relative;
   }
   .msg.error{
     align-self:flex-start; background:transparent;
-    border:1px dashed var(--error); color:var(--error);
+    border:1px dashed var(--error); color:var(--error); white-space:pre-wrap;
   }
 
-  /* Imagen dentro del mensaje del usuario */
+  /* Imagenes adjuntas dentro del mensaje del usuario */
+  .msg.user .imgs{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
   .msg.user .chat-img{
-    max-width:240px; max-height:200px; border-radius:10px;
-    display:block; margin-bottom:6px; cursor:zoom-in;
-    border:1px solid rgba(36,26,8,0.2);
+    max-width:150px; max-height:150px; border-radius:10px; display:block;
+    cursor:zoom-in; border:1px solid rgba(36,26,8,0.2); object-fit:cover;
   }
-  /* Imagen dentro del mensaje del bot (si la API devuelve markdown de imagen) */
-  .msg.bot .chat-img{
-    max-width:100%; border-radius:10px; display:block; margin:6px 0;
+  .msg .img-caption{ font-size:14px; }
+
+  /* Render de markdown del bot */
+  .md{ font-size:15px; }
+  .md p{ margin:0 0 .6em; }
+  .md p:last-child{ margin-bottom:0; }
+  .md h1,.md h2,.md h3,.md h4,.md h5,.md h6{ margin:.6em 0 .35em; line-height:1.25; }
+  .md h1{ font-size:1.35em; } .md h2{ font-size:1.2em; } .md h3{ font-size:1.08em; }
+  .md ul,.md ol{ margin:.3em 0 .6em; padding-left:1.4em; }
+  .md li{ margin:.15em 0; }
+  .md a{ color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+  .md strong{ font-weight:700; }
+  .md em{ font-style:italic; }
+  .md code.md-code{
+    background:var(--code-bg); border:1px solid var(--line);
+    border-radius:5px; padding:1px 5px;
+    font:13px ui-monospace, "Cascadia Code", Consolas, monospace;
   }
-  .msg .img-caption{
-    font-size:13px; opacity:0.85;
+  .md pre.md-pre{
+    position:relative; background:var(--code-bg); border:1px solid var(--line);
+    border-radius:10px; padding:12px 14px; margin:.5em 0; overflow-x:auto;
   }
+  .md pre.md-pre code{
+    font:13px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+    color:#dbe6f5; white-space:pre;
+  }
+  .code-copy{
+    position:absolute; top:6px; right:6px;
+    background:var(--panel); color:var(--muted);
+    border:1px solid var(--line); border-radius:6px;
+    font:11px ui-monospace, Consolas, monospace; padding:3px 8px; cursor:pointer;
+    opacity:0; transition:opacity .15s, color .15s;
+  }
+  .md pre.md-pre:hover .code-copy{ opacity:1; }
+  .code-copy:hover{ color:var(--text); }
+  .code-copy.done{ color:var(--success); }
+
+  .thinking-pill{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:12px; color:var(--muted); font-style:italic;
+  }
+  .thinking-pill::before{
+    content:""; width:6px; height:6px; border-radius:50%;
+    background:var(--accent); animation:pulse .9s infinite alternate;
+  }
+
+  /* Copiar mensaje completo del bot */
+  .msg-copy{
+    margin-top:8px; background:transparent; color:var(--muted);
+    border:1px solid var(--line); border-radius:6px;
+    font:11px ui-monospace, Consolas, monospace; padding:3px 9px; cursor:pointer;
+    transition:color .15s, border-color .15s;
+  }
+  .msg-copy:hover{ color:var(--text); border-color:var(--muted); }
+  .msg-copy.done{ color:var(--success); border-color:var(--success); }
 
   .typing{ align-self:flex-start; display:flex; gap:5px; padding:14px; }
   .typing i{ width:6px; height:6px; border-radius:50%; background:var(--muted); animation:blink 1.2s infinite; }
@@ -135,72 +207,62 @@
     display:flex; flex-direction:column;
     padding:0 18px 18px; border-top:1px solid var(--line);
   }
-  /* Area de preview de imagen */
-  .img-preview-area{
-    display:none; align-items:center; gap:10px;
-    padding:10px 0 6px;
-  }
+  .img-preview-area{ display:none; flex-wrap:wrap; gap:8px; padding:10px 0 2px; }
   .img-preview-area.active{ display:flex; }
+  .thumb-wrap{ position:relative; }
   .img-thumb{
-    width:48px; height:48px; border-radius:8px; object-fit:cover;
-    border:1px solid var(--line);
+    width:52px; height:52px; border-radius:8px; object-fit:cover;
+    border:1px solid var(--line); display:block;
   }
-  .img-info{
-    flex:1; font-size:12px; color:var(--muted);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  .thumb-x{
+    position:absolute; top:-6px; right:-6px;
+    width:20px; height:20px; border-radius:50%;
+    background:var(--bg); color:var(--muted);
+    border:1px solid var(--line); cursor:pointer;
+    font-size:13px; line-height:1; display:flex; align-items:center; justify-content:center;
   }
-  .img-remove{
-    background:transparent; color:var(--muted); border:1px solid var(--line);
-    border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer;
-    font-family:inherit;
-  }
-  .img-remove:hover{ color:var(--error); border-color:var(--error); }
+  .thumb-x:hover{ color:var(--error); border-color:var(--error); }
 
-  .input-row{
-    display:flex; gap:10px; padding-top:10px;
-  }
-  input{
+  .input-row{ display:flex; gap:10px; padding-top:10px; align-items:flex-end; }
+  textarea#input{
     flex:1; background:var(--panel); color:var(--text);
-    border:1px solid var(--line); border-radius:12px; padding:12px 14px; font:inherit;
+    border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+    font:inherit; resize:none; max-height:160px; min-height:46px;
+    line-height:1.45; overflow-y:auto;
   }
-  input::placeholder{ color:var(--muted); }
+  textarea#input::placeholder{ color:var(--muted); }
   button{
     background:var(--accent); color:var(--accent-text);
-    border:0; border-radius:12px; padding:0 20px;
-    font-family:inherit; font-size:14px; font-weight:600; cursor:pointer;
+    border:0; border-radius:12px; padding:0 20px; height:46px;
+    font:600 14px/1 inherit; cursor:pointer;
     display:flex; align-items:center; justify-content:center;
   }
-  button:disabled, input:disabled{ opacity:.55; cursor:default; }
+  button:disabled, textarea:disabled{ opacity:.55; cursor:default; }
+  #sendBtn.stop{ background:var(--error); color:#241008; }
 
-  /* Boton de adjuntar */
   .attach-btn{
     background:var(--panel); color:var(--muted);
-    border:1px solid var(--line); border-radius:12px;
-    padding:0 14px; cursor:pointer; display:flex;
-    align-items:center; justify-content:center;
-    transition: color 0.15s, border-color 0.15s;
+    border:1px solid var(--line); padding:0 14px; cursor:pointer;
+    transition:color .15s, border-color .15s;
   }
   .attach-btn:hover{ color:var(--text); border-color:var(--muted); }
   .attach-btn svg{ width:18px; height:18px; }
   .attach-btn:disabled{ opacity:.4; cursor:default; }
 
-  /* Modal para zoom de imagen */
   .img-modal{
     display:none; position:fixed; inset:0; z-index:100;
-    background:rgba(0,0,0,0.85);
-    align-items:center; justify-content:center;
+    background:rgba(0,0,0,.85); align-items:center; justify-content:center;
     padding:20px; cursor:zoom-out;
   }
   .img-modal.active{ display:flex; }
   .img-modal img{
-    max-width:90%; max-height:90%;
-    border-radius:12px; object-fit:contain;
-    box-shadow:0 20px 60px rgba(0,0,0,0.5);
+    max-width:90%; max-height:90%; border-radius:12px; object-fit:contain;
+    box-shadow:0 20px 60px rgba(0,0,0,.5);
   }
 
   :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
   @media (prefers-reduced-motion: reduce){
-    .dot.busy, .typing i{ animation:none; }
+    .dot.busy, .typing i, .thinking-pill::before{ animation:none; }
   }
 </style>
 <base target="_blank">
@@ -209,351 +271,598 @@
 <div class="app">
 
   <header>
-    <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+    <div class="head-tools">
       <div class="brand"><span class="dot" id="statusDot"></span>mini-chat</div>
       <div class="vision-badge" id="visionBadge" title="Este modelo puede analizar imagenes">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
         Vision
       </div>
     </div>
-    <select id="modelSelect" aria-label="Modelo">
-      <option value="gpt-4o-mini">GPT-4o mini · rapido + vision</option>
-      <option value="deepseek-v3-0324">DeepSeek V3 · potente</option>
-      <option value="deepseek-r1-0528">DeepSeek R1 · razonamiento</option>
-    </select>
+    <div class="head-tools">
+      <select id="modelSelect" aria-label="Modelo">
+        <option>cargando modelos…</option>
+      </select>
+      <button class="icon-btn" id="newChatBtn" type="button" title="Vaciar la conversacion">Nuevo</button>
+    </div>
   </header>
 
   <main id="messages">
     <p class="empty" id="emptyHint">
       Sin cuentas ni API keys (LLM7.io, nivel anonimo).<br><br>
       Escribe tu mensaje o <strong>arrastra una imagen</strong> aqui.<br>
-      Tambien puedes pegar imagen con <kbd>Ctrl+V</kbd>.<br>
-      Solo GPT-4o mini soporta analisis de imagenes.
+      Tambien puedes pegarla con <kbd>Ctrl+V</kbd>.<br><br>
+      Los modelos marcados con <span class="eye">👁</span> aceptan imagenes.
     </p>
   </main>
 
   <footer>
-    <div class="img-preview-area" id="imgPreviewArea">
-      <img class="img-thumb" id="imgThumb" src="" alt="Preview">
-      <span class="img-info" id="imgInfo">imagen.png</span>
-      <button class="img-remove" id="imgRemove" type="button">Quitar</button>
-    </div>
+    <div class="img-preview-area" id="imgPreviewArea"></div>
     <div class="input-row">
-      <input id="input" type="text" placeholder="Escribe un mensaje..." autocomplete="off" autofocus>
+      <textarea id="input" rows="1" placeholder="Escribe un mensaje… (Enter envia · Shift+Enter salto de linea)" autocomplete="off" autofocus></textarea>
       <button class="attach-btn" id="attachBtn" type="button" title="Adjuntar imagen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
       <button id="sendBtn" type="button">Enviar</button>
     </div>
-    <input type="file" id="fileInput" accept="image/*" style="display:none">
+    <input type="file" id="fileInput" accept="image/*" multiple style="display:none">
   </footer>
 
 </div>
 
-<!-- Modal zoom imagen -->
-<div class="img-modal" id="imgModal">
-  <img id="imgModalImg" src="" alt="Vista ampliada">
-</div>
+<div class="img-modal" id="imgModal"><img id="imgModalImg" src="" alt="Vista ampliada"></div>
 
 <script>
-  const API_URL = 'https://api.llm7.io/v1/chat/completions';
+"use strict";
 
-  // Modelos que soportan vision (multimodal)
-  const VISION_MODELS = ['gpt-4o-mini'];
+/* ------------------------- Configuracion ------------------------- */
+const API_URL    = 'https://api.llm7.io/v1/chat/completions';
+const MODELS_URL = 'https://api.llm7.io/v1/models';
+// Nivel anonimo: clave literal "unused". Para mas limite, saca token gratis
+// en https://token.llm7.io y pon: const AUTH = 'Bearer TU_TOKEN';
+const AUTH = 'Bearer unused';
 
-  const messagesEl   = document.getElementById('messages');
-  const inputEl      = document.getElementById('input');
-  const sendBtn      = document.getElementById('sendBtn');
-  const modelEl      = document.getElementById('modelSelect');
-  const dotEl        = document.getElementById('statusDot');
-  const visionBadge  = document.getElementById('visionBadge');
-  const attachBtn    = document.getElementById('attachBtn');
-  const fileInput    = document.getElementById('fileInput');
-  const imgPreview   = document.getElementById('imgPreviewArea');
-  const imgThumb     = document.getElementById('imgThumb');
-  const imgInfo      = document.getElementById('imgInfo');
-  const imgRemove    = document.getElementById('imgRemove');
-  const imgModal     = document.getElementById('imgModal');
-  const imgModalImg  = document.getElementById('imgModalImg');
+const SYSTEM =
+  'Eres un asistente util y conciso. Responde en el idioma del usuario. ' +
+  'Cuando se te comparta una imagen, analizala con detalle si el usuario lo pide, ' +
+  'o tenla en cuenta para tu respuesta. Usa markdown cuando ayude a la claridad.';
 
-  const SYSTEM = 'Eres un asistente util y conciso. Responde en el idioma del usuario. Cuando se te comparta una imagen, analizala con detalle si el usuario lo solicita, o tenla en cuenta para tu respuesta.';
-  const history = []; // {role, content} o {role, content: [{type, ...}]}
+const MAX_DIM       = 1280;  // px (lado mayor) al redimensionar imagenes
+const JPEG_QUALITY  = 0.85;  // calidad JPEG de salida
+const MAX_IMAGES    = 4;     // adjuntos por mensaje
+const HISTORY_LIMIT = 24;    // mensajes en contexto (solo en memoria)
 
-  let attachedImage = null; // { base64, mime, name, size }
+// Lista de respaldo si /v1/models no responde (catalogo gratis conocido).
+const FALLBACK_MODELS = [
+  { id:'devstral-small-2:24b', vision:true  },
+  { id:'qwen3-235b',           vision:false },
+  { id:'mistral-small-3.2',    vision:false },
+  { id:'codestral-latest',     vision:false },
+];
 
-  // ---------- Helpers UI ----------
+/* ------------------------- Estado ------------------------- */
+const history = [];          // [{role, content}]  content = string | bloques[]
+let attachedImages = [];     // [{ dataUrl, name }]
+let modelsMap = {};          // id -> { id, vision }
+let currentModel = null;
+let isBusy = false;
+let abortController = null;
 
-  function updateVisionBadge(){
-    const supports = VISION_MODELS.includes(modelEl.value);
-    visionBadge.classList.toggle('active', supports);
-    attachBtn.disabled = !supports;
-    attachBtn.title = supports ? 'Adjuntar imagen' : 'Solo GPT-4o mini soporta imagenes';
+/* ------------------------- Referencias DOM ------------------------- */
+const messagesEl  = document.getElementById('messages');
+const inputEl     = document.getElementById('input');
+const sendBtn     = document.getElementById('sendBtn');
+const newChatBtn  = document.getElementById('newChatBtn');
+const modelEl     = document.getElementById('modelSelect');
+const dotEl       = document.getElementById('statusDot');
+const visionBadge = document.getElementById('visionBadge');
+const attachBtn   = document.getElementById('attachBtn');
+const fileInput   = document.getElementById('fileInput');
+const imgPreview  = document.getElementById('imgPreviewArea');
+const imgModal    = document.getElementById('imgModal');
+const imgModalImg = document.getElementById('imgModalImg');
+
+/* ------------------------- Carga de modelos (en vivo) ------------------------- */
+function isFreeModel(m){ return !m.tier; }                 // los Pro traen tier:"pro"
+function isVisionModel(m){
+  const inp = m && m.modalities && m.modalities.input && m.modalities.input.input;
+  return Array.isArray(inp) && inp.includes('image');
+}
+
+async function loadModels(){
+  let list = null;
+  try{
+    const r = await fetch(MODELS_URL, { headers:{ 'Authorization': AUTH } });
+    if(r.ok) list = await r.json();
+  }catch(_){ /* sin red / CORS -> usamos respaldo */ }
+
+  let usable = Array.isArray(list)
+    ? list.filter(isFreeModel).map(m => ({ id:m.id, vision:isVisionModel(m) }))
+    : null;
+
+  if(!usable || !usable.length){
+    usable = FALLBACK_MODELS.map(m => ({ id:m.id, vision:m.vision }));
   }
-  modelEl.addEventListener('change', () => {
-    updateVisionBadge();
-    if (!VISION_MODELS.includes(modelEl.value) && attachedImage) {
-      clearAttachedImage();
-    }
-  });
+
+  // Modelos con vision primero, luego alfabetico.
+  usable.sort((a,b) => (b.vision?1:0)-(a.vision?1:0) || a.id.localeCompare(b.id));
+
+  modelsMap = {};
+  modelEl.innerHTML = '';
+  for(const m of usable){
+    modelsMap[m.id] = m;
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = (m.vision ? '👁 ' : '') + m.id;
+    modelEl.appendChild(opt);
+  }
+
+  // Por defecto, el primero con vision (para que las imagenes funcionen ya).
+  const firstVision = usable.find(m => m.vision);
+  currentModel = (firstVision || usable[0]).id;
+  modelEl.value = currentModel;
   updateVisionBadge();
+}
 
-  function formatBytes(b){
-    if (b < 1024) return b + ' B';
-    if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
-    return (b/(1024*1024)).toFixed(2) + ' MB';
+function currentModelVision(){ return !!(modelsMap[currentModel] && modelsMap[currentModel].vision); }
+
+function updateVisionBadge(){
+  const v = currentModelVision();
+  visionBadge.classList.toggle('active', v);
+  attachBtn.disabled = !v || isBusy;
+  attachBtn.title = v ? 'Adjuntar imagen' : 'Este modelo no acepta imagenes';
+}
+
+modelEl.addEventListener('change', () => {
+  currentModel = modelEl.value;
+  updateVisionBadge();
+  if(!currentModelVision() && attachedImages.length){
+    clearImages();
+    showError('Cambiaste a un modelo de solo texto: quite las imagenes adjuntas.');
   }
+});
 
-  function setAttachedImage({ base64, mime, name, size }){
-    attachedImage = { base64, mime, name, size };
-    imgThumb.src = base64;
-    imgInfo.textContent = name + ' · ' + formatBytes(size);
-    imgPreview.classList.add('active');
-    inputEl.focus();
-  }
+/* ------------------------- Markdown seguro (sin librerias) ------------------------- */
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function sanitizeUrl(u){
+  try{
+    const url = new URL(u, location.href);
+    if(['http:','https:','mailto:'].includes(url.protocol)) return url.href;
+  }catch(_){}
+  return '#';
+}
+function blockify(text){
+  const lines = text.split('\n');
+  let html = '', i = 0;
+  const isPlaceholder = l => /^\u0000\d+\u0000$/.test(l.trim());
+  const special = l =>
+    l.trim() === '' || /^(#{1,6})\s+/.test(l) || /^\s*[-*+]\s+/.test(l) ||
+    /^\s*\d+\.\s+/.test(l) || isPlaceholder(l);
 
-  function clearAttachedImage(){
-    attachedImage = null;
-    imgThumb.src = '';
-    imgInfo.textContent = '';
-    imgPreview.classList.remove('active');
-    fileInput.value = '';
-  }
-
-  imgRemove.addEventListener('click', clearAttachedImage);
-
-  // ---------- Adjuntar imagen ----------
-
-  attachBtn.addEventListener('click', () => {
-    if (!attachBtn.disabled) fileInput.click();
-  });
-
-  fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) readImageFile(file);
-  });
-
-  function readImageFile(file){
-    if (!file.type.startsWith('image/')){
-      addMsg('Error: El archivo debe ser una imagen (JPG, PNG, GIF, WebP...)', 'error');
-      return;
+  while(i < lines.length){
+    const line = lines[i];
+    if(isPlaceholder(line)){ html += line.trim(); i++; continue; }
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if(h){ const lvl = h[1].length; html += `<h${lvl}>${h[2]}</h${lvl}>`; i++; continue; }
+    if(/^\s*[-*+]\s+/.test(line)){
+      const items = [];
+      while(i < lines.length && /^\s*[-*+]\s+/.test(lines[i])){
+        items.push('<li>' + lines[i].replace(/^\s*[-*+]\s+/, '') + '</li>'); i++;
+      }
+      html += '<ul>' + items.join('') + '</ul>'; continue;
     }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setAttachedImage({
-        base64: ev.target.result,
-        mime: file.type,
-        name: file.name,
-        size: file.size
+    if(/^\s*\d+\.\s+/.test(line)){
+      const items = [];
+      while(i < lines.length && /^\s*\d+\.\s+/.test(lines[i])){
+        items.push('<li>' + lines[i].replace(/^\s*\d+\.\s+/, '') + '</li>'); i++;
+      }
+      html += '<ol>' + items.join('') + '</ol>'; continue;
+    }
+    if(line.trim() === ''){ i++; continue; }
+    const buf = [];
+    while(i < lines.length && !special(lines[i])){ buf.push(lines[i]); i++; }
+    html += '<p>' + buf.join('<br>') + '</p>';
+  }
+  return html;
+}
+function renderMarkdown(src){
+  const store = [];
+  const stash = html => { const i = store.length; store.push(html); return '\u0000' + i + '\u0000'; };
+  // bloques de codigo cercados
+  src = src.replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (m, lang, code) =>
+    stash(`<pre class="md-pre"><button class="code-copy" type="button">copiar</button><code>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`));
+  // enlaces [texto](url)
+  src = src.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, t, u) =>
+    stash(`<a href="${sanitizeUrl(u)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t)}</a>`));
+  // codigo en linea
+  src = src.replace(/`([^`\n]+)`/g, (m, c) => stash(`<code class="md-code">${escapeHtml(c)}</code>`));
+  // escapar el resto
+  src = escapeHtml(src);
+  // negrita / cursiva
+  src = src.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  src = src.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  src = src.replace(/(^|[^_\w])_([^_\n]+)_/g, '$1<em>$2</em>');
+  // bloques (parrafos / listas / encabezados)
+  src = blockify(src);
+  // restaurar placeholders
+  src = src.replace(/\u0000(\d+)\u0000/g, (m, i) => store[+i]);
+  return src;
+}
+
+/* ------------------------- Bloques <think> (modelos de razonamiento) ------------------------- */
+function hasOpenThink(t){
+  const o = (t.match(/<think>/gi) || []).length;
+  const c = (t.match(/<\/think>/gi) || []).length;
+  return o > c;
+}
+function stripThink(t){
+  let s = t.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const open = s.search(/<think>/i);
+  if(open !== -1) s = s.slice(0, open);
+  return s.trim();
+}
+
+/* ------------------------- UI: mensajes ------------------------- */
+function removeEmptyHint(){ const e = document.getElementById('emptyHint'); if(e) e.remove(); }
+function scrollDown(){ messagesEl.scrollTop = messagesEl.scrollHeight; }
+
+function showError(text){
+  const el = document.createElement('div');
+  el.className = 'msg error';
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  scrollDown();
+}
+
+function renderUserMessage(text, imgs){
+  const el = document.createElement('div');
+  el.className = 'msg user';
+  if(imgs.length){
+    const row = document.createElement('div');
+    row.className = 'imgs';
+    for(const im of imgs){
+      const img = document.createElement('img');
+      img.className = 'chat-img';
+      img.src = im.dataUrl;
+      img.alt = im.name || 'imagen';
+      img.addEventListener('click', () => openModal(im.dataUrl));
+      row.appendChild(img);
+    }
+    el.appendChild(row);
+  }
+  if(text){
+    const cap = document.createElement('div');
+    cap.className = 'img-caption';
+    cap.textContent = text;
+    el.appendChild(cap);
+  }
+  messagesEl.appendChild(el);
+  scrollDown();
+}
+
+function attachCodeCopiers(scope){
+  scope.querySelectorAll('pre.md-pre').forEach(pre => {
+    const btn = pre.querySelector('.code-copy');
+    if(!btn || btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code');
+      copyText(code ? code.innerText : '');
+      btn.textContent = 'copiado'; btn.classList.add('done');
+      setTimeout(() => { btn.textContent = 'copiar'; btn.classList.remove('done'); }, 1400);
+    });
+  });
+}
+
+// Crea el contenedor del bot y devuelve helpers para render incremental.
+function createBotMessage(){
+  const wrap = document.createElement('div');
+  wrap.className = 'msg bot';
+  const body = document.createElement('div');
+  body.className = 'md';
+  wrap.appendChild(body);
+  messagesEl.appendChild(wrap);
+  scrollDown();
+
+  return {
+    render(raw){
+      const open = hasOpenThink(raw);
+      const disp = stripThink(raw);
+      let html = disp ? renderMarkdown(disp) : '';
+      if(open) html = '<span class="thinking-pill">razonando…</span>' + (html ? '<br>' + html : '');
+      body.innerHTML = html || '<span class="thinking-pill">…</span>';
+    },
+    finalize(text){
+      body.innerHTML = renderMarkdown(text);
+      attachCodeCopiers(body);
+      const copy = document.createElement('button');
+      copy.className = 'msg-copy';
+      copy.type = 'button';
+      copy.textContent = 'copiar';
+      copy.addEventListener('click', () => {
+        copyText(text);
+        copy.textContent = 'copiado'; copy.classList.add('done');
+        setTimeout(() => { copy.textContent = 'copiar'; copy.classList.remove('done'); }, 1400);
       });
+      wrap.appendChild(copy);
+      scrollDown();
+    },
+    remove(){ wrap.remove(); }
+  };
+}
+
+function copyText(t){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).catch(() => fallbackCopy(t));
+  }else fallbackCopy(t);
+}
+function fallbackCopy(t){
+  const ta = document.createElement('textarea');
+  ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); }catch(_){}
+  ta.remove();
+}
+
+/* ------------------------- Estado ocupado ------------------------- */
+function setBusy(busy){
+  isBusy = busy;
+  dotEl.classList.toggle('busy', busy);
+  attachBtn.disabled = busy || !currentModelVision();
+  sendBtn.textContent = busy ? 'Detener' : 'Enviar';
+  sendBtn.classList.toggle('stop', busy);
+}
+
+function trimHistory(){
+  if(history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
+  while(history.length && history[0].role !== 'user') history.shift();
+}
+
+/* ------------------------- Imagenes: redimensionar en el navegador ------------------------- */
+function resizeImage(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('No se pudo leer "' + file.name + '".'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('"' + file.name + '" no es una imagen valida.'));
+      img.onload = () => {
+        let w = img.naturalWidth, h = img.naturalHeight;
+        const scale = Math.min(1, MAX_DIM / Math.max(w, h));
+        w = Math.max(1, Math.round(w * scale));
+        h = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';            // JPEG no tiene transparencia
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve({ dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY), name: file.name });
+      };
+      img.src = reader.result;
     };
     reader.readAsDataURL(file);
+  });
+}
+
+async function handleFiles(fileList){
+  if(!currentModelVision()){
+    showError('Este modelo no acepta imagenes. Elige uno marcado con 👁.');
+    return;
   }
+  const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+  if(!files.length){ showError('Solo se pueden adjuntar imagenes (JPG, PNG, GIF, WebP…).'); return; }
 
-  // ---------- Drag & Drop ----------
-
-  ['dragenter','dragover','dragleave','drop'].forEach(evt => {
-    messagesEl.addEventListener(evt, preventDefaults, false);
-    document.body.addEventListener(evt, preventDefaults, false);
-  });
-  function preventDefaults(e){ e.preventDefault(); e.stopPropagation(); }
-
-  messagesEl.addEventListener('dragenter', () => {
-    if (VISION_MODELS.includes(modelEl.value)) messagesEl.classList.add('drag-over');
-  });
-  messagesEl.addEventListener('dragleave', (e) => {
-    if (e.relatedTarget && !messagesEl.contains(e.relatedTarget)) messagesEl.classList.remove('drag-over');
-  });
-  messagesEl.addEventListener('drop', (e) => {
-    messagesEl.classList.remove('drag-over');
-    if (!VISION_MODELS.includes(modelEl.value)){
-      addMsg('Este modelo no soporta imagenes. Cambia a GPT-4o mini.', 'error');
-      return;
-    }
-    const files = e.dataTransfer.files;
-    if (files.length) readImageFile(files[0]);
-  });
-
-  // ---------- Clipboard (pegar imagen) ----------
-
-  document.addEventListener('paste', (e) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items){
-      if (item.type.startsWith('image/')){
-        e.preventDefault();
-        if (!VISION_MODELS.includes(modelEl.value)){
-          addMsg('Este modelo no soporta imagenes. Cambia a GPT-4o mini.', 'error');
-          return;
-        }
-        const file = item.getAsFile();
-        if (file) readImageFile(file);
-        break;
-      }
-    }
-  });
-
-  // ---------- Mensajes ----------
-
-  function addMsg(text, cls){
-    const el = document.createElement('div');
-    el.className = 'msg ' + cls;
-    el.textContent = text;
-    messagesEl.appendChild(el);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-    return el;
+  for(const f of files){
+    if(attachedImages.length >= MAX_IMAGES){ showError('Maximo ' + MAX_IMAGES + ' imagenes por mensaje.'); break; }
+    try{ attachedImages.push(await resizeImage(f)); }
+    catch(e){ showError(e.message); }
   }
+  renderPreviews();
+}
 
-  function addMsgWithImage(text, imageBase64, imageName){
-    const el = document.createElement('div');
-    el.className = 'msg user';
-
+function renderPreviews(){
+  imgPreview.innerHTML = '';
+  attachedImages.forEach((im, idx) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'thumb-wrap';
     const img = document.createElement('img');
-    img.className = 'chat-img';
-    img.src = imageBase64;
-    img.alt = imageName || 'Imagen adjunta';
-    img.addEventListener('click', () => openModal(imageBase64));
-    el.appendChild(img);
+    img.className = 'img-thumb';
+    img.src = im.dataUrl;
+    img.alt = im.name;
+    const x = document.createElement('button');
+    x.className = 'thumb-x';
+    x.type = 'button';
+    x.textContent = '×';
+    x.title = 'Quitar';
+    x.addEventListener('click', () => { attachedImages.splice(idx, 1); renderPreviews(); });
+    wrap.appendChild(img); wrap.appendChild(x);
+    imgPreview.appendChild(wrap);
+  });
+  imgPreview.classList.toggle('active', attachedImages.length > 0);
+}
 
-    if (text){
-      const cap = document.createElement('div');
-      cap.className = 'img-caption';
-      cap.textContent = text;
-      el.appendChild(cap);
-    }
+function clearImages(){
+  attachedImages = [];
+  fileInput.value = '';
+  renderPreviews();
+}
 
-    messagesEl.appendChild(el);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-    return el;
-  }
+/* ------------------------- Adjuntar / arrastrar / pegar ------------------------- */
+attachBtn.addEventListener('click', () => { if(!attachBtn.disabled) fileInput.click(); });
+fileInput.addEventListener('change', e => { if(e.target.files.length) handleFiles(e.target.files); });
 
-  function addTyping(){
-    const el = document.createElement('div');
-    el.className = 'typing';
-    el.innerHTML = '<i></i><i></i><i></i>';
-    messagesEl.appendChild(el);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-    return el;
-  }
+['dragenter','dragover','dragleave','drop'].forEach(evt => {
+  messagesEl.addEventListener(evt, prevent, false);
+  document.body.addEventListener(evt, prevent, false);
+});
+function prevent(e){ e.preventDefault(); e.stopPropagation(); }
+messagesEl.addEventListener('dragenter', () => { if(currentModelVision()) messagesEl.classList.add('drag-over'); });
+messagesEl.addEventListener('dragleave', e => { if(e.relatedTarget && !messagesEl.contains(e.relatedTarget)) messagesEl.classList.remove('drag-over'); });
+messagesEl.addEventListener('drop', e => {
+  messagesEl.classList.remove('drag-over');
+  if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+});
+document.addEventListener('paste', e => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if(!items) return;
+  const imgFiles = [];
+  for(const it of items){ if(it.type.startsWith('image/')){ const f = it.getAsFile(); if(f) imgFiles.push(f); } }
+  if(imgFiles.length){ e.preventDefault(); handleFiles(imgFiles); }
+});
 
-  function setBusy(busy){
-    inputEl.disabled = busy;
-    sendBtn.disabled = busy;
-    attachBtn.disabled = busy || !VISION_MODELS.includes(modelEl.value);
-    dotEl.classList.toggle('busy', busy);
-  }
+/* ------------------------- Modal de zoom ------------------------- */
+function openModal(src){ imgModalImg.src = src; imgModal.classList.add('active'); }
+imgModal.addEventListener('click', () => imgModal.classList.remove('active'));
+document.addEventListener('keydown', e => { if(e.key === 'Escape') imgModal.classList.remove('active'); });
 
-  function trimHistory(){
-    if (history.length > 20) history.splice(0, history.length - 20);
-    while (history.length && history[0].role !== 'user') history.shift();
-  }
+/* ------------------------- Streaming (SSE OpenAI-compatible) ------------------------- */
+function friendlyHttp(status, detail){
+  const d = detail ? ' (' + detail + ')' : '';
+  if(status === 429) return 'Limite anonimo alcanzado (~30/min). Espera un momento y reintenta.';
+  if(status === 400) return 'El modelo rechazo la solicitud (400)' + d + '. Si adjuntaste una imagen, prueba con un modelo marcado con 👁.';
+  if(status === 401 || status === 403) return 'Acceso denegado (' + status + ')' + d + '. Probablemente sea un modelo Pro o haga falta token. Usa un modelo gratis.';
+  if(status === 404) return 'Ese modelo ya no existe (404). Elige otro de la lista.';
+  if(status >= 500) return 'El servicio fallo (' + status + ')' + d + '. Reintenta o cambia de modelo.';
+  return 'Error ' + status + d + '.';
+}
 
-  // ---------- Modal zoom ----------
-
-  function openModal(src){
-    imgModalImg.src = src;
-    imgModal.classList.add('active');
-  }
-  imgModal.addEventListener('click', () => imgModal.classList.remove('active'));
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') imgModal.classList.remove('active');
+async function streamChat(messages, onDelta, signal){
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': AUTH },
+    body: JSON.stringify({ model: currentModel, messages, stream: true }),
+    signal
   });
 
-  // ---------- Envio ----------
-
-
-
-  async function send(){
-    const text = inputEl.value.trim();
-    const hasImage = attachedImage !== null;
-
-    if ((!text && !hasImage) || sendBtn.disabled) return;
-
-    document.getElementById('emptyHint')?.remove();
-
-    let userMessage;
-    let userContentForHistory;
-
-    if (hasImage){
-        const contentBlocks = [];
-        if (text) contentBlocks.push({ type: 'text', text });
-        
-        // ✅ Asegurar que el Data URL esté bien formado
-        // Algunas APIs requieren que el base64 NO incluya el prefijo data:image/...
-        // pero OpenAI SÍ lo requiere. Para compatibilidad, verificamos:
-        let imageUrl = attachedImage.base64;
-        if (!imageUrl.startsWith('data:')) {
-        imageUrl = `data:${attachedImage.mime};base64,${imageUrl}`;
-        }
-        
-        contentBlocks.push({
-        type: 'image_url',
-        image_url: { url: imageUrl, detail: 'auto' }  // detail: 'auto' es opcional pero recomendado
-        });
-        
-        userMessage = { role: 'user', content: contentBlocks };
-        userContentForHistory = text
-        ? `[Imagen: ${attachedImage.name}] ${text}`
-        : `[Imagen: ${attachedImage.name}]`;
-    } else {
-        userMessage = { role: 'user', content: text };
-        userContentForHistory = text;
-    }
-
-    // Muestra en UI
-    if (hasImage){
-      addMsgWithImage(text, attachedImage.base64, attachedImage.name);
-    } else {
-      addMsg(text, 'user');
-    }
-
-    // Guarda en historial (usamos el objeto real para la API)
-    history.push(userMessage);
-    trimHistory();
-    inputEl.value = '';
-    const imgToClear = hasImage;
-    if (imgToClear) clearAttachedImage();
-    setBusy(true);
-    const typing = addTyping();
-
-    try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer unused'
-        },
-        body: JSON.stringify({
-          model: modelEl.value,
-          messages: [ { role: 'system', content: SYSTEM }, ...history ]
-        })
-      });
-
-      if (res.status === 429){
-        throw new Error('Limite anonimo alcanzado (~30/min). Espera un poco y reintenta.');
-      }
-      if (!res.ok){
-        throw new Error('El servicio respondio ' + res.status + '. Reintenta o cambia de modelo.');
-      }
-
-      const data = await res.json();
-      let out = data?.choices?.[0]?.message?.content || '';
-      out = out.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || '(respuesta vacia)';
-
-      history.push({ role: 'assistant', content: out });
-      typing.remove();
-      addMsg(out, 'bot');
-    } catch (err) {
-      history.pop();
-      typing.remove();
-      addMsg('Error: ' + (err?.message || 'sin conexion con el servicio.'), 'error');
-    } finally {
-      setBusy(false);
-      inputEl.focus();
-    }
+  if(!res.ok){
+    let detail = '';
+    try{ const j = await res.json(); detail = (j.error && j.error.message) || j.message || ''; }catch(_){}
+    const err = new Error(friendlyHttp(res.status, detail));
+    err.handled = true;
+    throw err;
   }
 
-  sendBtn.addEventListener('click', send);
-  inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+  const ct = res.headers.get('content-type') || '';
+  // Si el proveedor ignora stream y manda JSON normal, lo procesamos igual.
+  if(!ct.includes('text/event-stream') || !res.body){
+    const data = await res.json();
+    const out = (((data.choices || [])[0] || {}).message || {}).content || '';
+    onDelta(out);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while(true){
+    const { value, done } = await reader.read();
+    if(done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while((nl = buf.indexOf('\n')) !== -1){
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if(!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if(payload === '[DONE]') return;
+      try{
+        const j = JSON.parse(payload);
+        const delta = (((j.choices || [])[0] || {}).delta || {}).content;
+        if(delta) onDelta(delta);
+      }catch(_){ /* keepalive / fragmento parcial */ }
+    }
+  }
+}
+
+/* ------------------------- Envio ------------------------- */
+async function send(){
+  const text = inputEl.value.trim();
+  const imgs = attachedImages.slice();
+  if((!text && !imgs.length) || isBusy) return;
+
+  removeEmptyHint();
+
+  let content;
+  if(imgs.length){
+    const blocks = [];
+    if(text) blocks.push({ type: 'text', text });
+    for(const im of imgs) blocks.push({ type: 'image_url', image_url: { url: im.dataUrl } });
+    content = blocks;
+  }else{
+    content = text;
+  }
+
+  history.push({ role: 'user', content });
+  trimHistory();
+
+  renderUserMessage(text, imgs);
+  inputEl.value = '';
+  autosize();
+  clearImages();
+  setBusy(true);
+
+  const bot = createBotMessage();
+  abortController = new AbortController();
+
+  let raw = '', scheduled = false;
+  const flush = () => { scheduled = false; bot.render(raw); scrollDown(); };
+  const onDelta = chunk => {
+    raw += chunk;
+    if(!scheduled){ scheduled = true; requestAnimationFrame(flush); }
+  };
+
+  try{
+    await streamChat([{ role: 'system', content: SYSTEM }, ...history], onDelta, abortController.signal);
+    const finalText = stripThink(raw) || '(respuesta vacia)';
+    bot.finalize(finalText);
+    history.push({ role: 'assistant', content: finalText });
+    trimHistory();
+  }catch(err){
+    if(err.name === 'AbortError'){
+      const partial = stripThink(raw);
+      if(partial){ bot.finalize(partial); history.push({ role: 'assistant', content: partial }); trimHistory(); }
+      else { bot.remove(); history.pop(); }   // sin texto util: quita el turno
+    }else{
+      bot.remove();
+      history.pop();                            // no envenenar el contexto con un turno fallido
+      showError(err.handled ? err.message : ('Error: ' + (err.message || 'sin conexion con el servicio.')));
+    }
+  }finally{
+    setBusy(false);
+    abortController = null;
+    inputEl.focus();
+  }
+}
+
+/* ------------------------- Input: autosize + atajos ------------------------- */
+function autosize(){
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+}
+inputEl.addEventListener('input', autosize);
+inputEl.addEventListener('keydown', e => {
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); send(); }
+});
+
+sendBtn.addEventListener('click', () => { if(isBusy) abortController && abortController.abort(); else send(); });
+
+newChatBtn.addEventListener('click', () => {
+  if(isBusy) abortController && abortController.abort();
+  history.length = 0;
+  clearImages();
+  messagesEl.innerHTML =
+    '<p class="empty" id="emptyHint">Conversacion nueva.<br><br>' +
+    'Escribe tu mensaje o <strong>arrastra una imagen</strong>.<br>' +
+    'Los modelos con <span class="eye">👁</span> aceptan imagenes.</p>';
+});
+
+/* ------------------------- Arranque ------------------------- */
+loadModels().catch(() => {
+  showError('No se pudo cargar la lista de modelos. Usando la lista de respaldo.');
+});
+autosize();
 </script>
 </body>
 </html>
